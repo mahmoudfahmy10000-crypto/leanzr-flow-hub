@@ -22,6 +22,7 @@ interface TopNavProps {
   activeTab: 'board' | 'precedence' | 'scenarios';
   setActiveTab: (tab: 'board' | 'precedence' | 'scenarios') => void;
   project: FlowProject;
+  projects?: FlowProject[];
   onSelectProject: (project: FlowProject) => void;
   onOpenOptimizer: () => void;
   onOpenPlaybook: () => void;
@@ -36,6 +37,7 @@ export const TopNav: React.FC<TopNavProps> = ({
   activeTab,
   setActiveTab,
   project,
+  projects = sampleProjects,
   onSelectProject,
   onOpenOptimizer,
   onOpenPlaybook,
@@ -78,9 +80,9 @@ export const TopNav: React.FC<TopNavProps> = ({
           {showProjectMenu && (
             <div className="absolute top-full left-0 mt-1.5 w-72 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-2 z-50">
               <div className="px-2 py-1 text-[10px] uppercase font-bold tracking-wider text-slate-400">
-                Preset Industrial Benchmarks
+                Saved Projects & Benchmarks
               </div>
-              {sampleProjects.map((p) => (
+              {projects.map((p) => (
                 <button
                   key={p.id}
                   onClick={() => {

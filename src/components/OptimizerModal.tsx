@@ -16,16 +16,8 @@ import {
   OptimizationResult,
 } from '../utils/line-balancing-optimizer.ts';
 import { calculateLineMetrics } from '../utils/engineering-math.ts';
-import {
-  Wand2,
-  X,
-  CheckCircle2,
-  Sliders,
-  TrendingUp,
-  Cpu,
-  Layers,
-  Sparkles,
-} from 'lucide-react';
+import { Modal } from './Modal.tsx';
+import { CheckCircle2, TrendingUp } from 'lucide-react';
 
 interface OptimizerModalProps {
   isOpen: boolean;
@@ -34,8 +26,9 @@ interface OptimizerModalProps {
   stations: Workstation[];
   params: OperatingParameters;
   currentMetrics: LineCalculations;
-  onApplyOptimization: (stations: Workstation[], tasks: Task[]) => void;
-  onSaveAsScenario: (name: string, stations: Workstation[], tasks: Task[]) => void;
+  onApplyOptimization: (stations: Workstation[], tasks: Task[]) => boolean | void;
+  onSaveAsScenario: (name: string, stations: Workstation[], tasks: Task[]) => boolean | void;
+  saveError?: string | null;
 }
 
 export const OptimizerModal: React.FC<OptimizerModalProps> = ({
@@ -47,22 +40,25 @@ export const OptimizerModal: React.FC<OptimizerModalProps> = ({
   currentMetrics,
   onApplyOptimization,
   onSaveAsScenario,
+  saveError,
 }) => {
+  const [submissionFailed, setSubmissionFailed] = useState(false);
   const [algorithm, setAlgorithm] = useState<'rpw' | 'lpt' | 'leveling'>('rpw');
   const [targetMode, setTargetMode] = useState<'takt' | 'target' | 'custom'>('takt');
   const [customCT, setCustomCT] = useState(
-    Math.round(currentMetrics.taktTimeSeconds > 0 ? currentMetrics.taktTimeSeconds : 100)
+    String(Math.round(currentMetrics.taktTimeSeconds > 0 ? currentMetrics.taktTimeSeconds : 100))
   );
 
   const getTargetTime = () => {
     if (targetMode === 'takt') return currentMetrics.taktTimeSeconds;
     if (targetMode === 'target') return currentMetrics.targetCycleTimeSeconds;
-    return customCT;
+    return Number(customCT);
   };
 
   // Run selected optimization deterministically
   const targetTime = getTargetTime();
-  const optimizationResult: OptimizationResult = React.useMemo(() => {
+  const optimizationResult: OptimizationResult | null = React.useMemo(() => {
+    if (!isOpen) return null;
     if (algorithm === 'rpw') {
       return runRPWOptimization(tasks, targetTime, stations);
     }
@@ -70,10 +66,11 @@ export const OptimizerModal: React.FC<OptimizerModalProps> = ({
       return runLPTOptimization(tasks, targetTime, stations);
     }
     return runSmoothnessLeveling(stations, tasks, targetTime);
-  }, [algorithm, targetTime, tasks, stations]);
+  }, [isOpen, algorithm, targetTime, tasks, stations]);
 
   // Compute full metrics for the optimized result
   const optimizedMetrics = React.useMemo(() => {
+    if (!optimizationResult) return null;
     return calculateLineMetrics(
       optimizationResult.stations,
       optimizationResult.tasks,
@@ -81,39 +78,34 @@ export const OptimizerModal: React.FC<OptimizerModalProps> = ({
     );
   }, [optimizationResult, params]);
 
-  if (!isOpen) return null;
+  React.useEffect(() => {
+    setSubmissionFailed(false);
+  }, [isOpen, optimizationResult]);
+
+  if (!isOpen || !optimizationResult || !optimizedMetrics) return null;
+
+  const canApply = optimizationResult.assessment.status === 'valid' && optimizedMetrics.assessment.status === 'valid';
+  const reasons = [...optimizationResult.assessment.reasons, ...optimizedMetrics.assessment.reasons]
+    .filter((reason, index, all) => all.findIndex((other) => other.code === reason.code && other.message === reason.message) === index);
 
   const effDelta = optimizedMetrics.lineBalancingEfficiencyPercent - currentMetrics.lineBalancingEfficiencyPercent;
   const ctDelta = optimizedMetrics.bottleneckCycleTime - currentMetrics.bottleneckCycleTime;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
-        {/* Modal Header */}
-        <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-cyan-950 border border-cyan-700/60 flex items-center justify-center text-cyan-400">
-              <Wand2 className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="text-base font-semibold text-white">
-                Deterministic Line Balancing Optimizer
-              </h2>
-              <p className="text-xs text-slate-400">
-                Helgeson-Birnie (RPW) & LPT industrial engineering heuristics
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
+    <Modal isOpen={isOpen} onClose={onClose} title="Deterministic Line Balancing Optimizer" className="max-w-3xl">
         {/* Modal Body */}
         <div className="p-6 overflow-y-auto space-y-6">
+          <div role="status" className={`p-3 rounded-xl border text-xs ${canApply ? 'border-cyan-700 bg-cyan-950/30 text-cyan-200' : 'border-amber-700 bg-amber-950/30 text-amber-200'}`}>
+            <p className="font-semibold">Proposal status: {optimizationResult.assessment.status}; project evaluation: {optimizedMetrics.assessment.status}</p>
+            {reasons.length > 0 && <ul className="mt-2 list-disc pl-4 space-y-1">{reasons.map((reason, index) => <li key={`${reason.code}-${index}`}>{reason.message}</li>)}</ul>}
+            <p className="mt-2">Sequential station loads are used without dividing by operator count. These heuristics do not prove a global optimum or model machine/operator schedules.</p>
+            {!canApply && <p className="mt-2">Resolve the listed issues before saving or applying this proposal.</p>}
+          </div>
+          {submissionFailed && (
+            <p role="alert" className="rounded-xl border border-rose-700 bg-rose-950/30 p-3 text-xs text-rose-200">
+              {saveError || 'The proposal could not be saved. Review the project validation or storage error and try again.'}
+            </p>
+          )}
           {/* Algorithm Selector */}
           <div>
             <label className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2 block">
@@ -166,7 +158,7 @@ export const OptimizerModal: React.FC<OptimizerModalProps> = ({
                 }`}
               >
                 <div className="font-semibold text-xs mb-1 flex items-center justify-between">
-                  <span>Workload Leveling (2-Opt)</span>
+                  <span>Workload Leveling</span>
                   {algorithm === 'leveling' && <CheckCircle2 className="w-3.5 h-3.5 text-cyan-400" />}
                 </div>
                 <p className="text-[11px] text-slate-400">
@@ -221,7 +213,10 @@ export const OptimizerModal: React.FC<OptimizerModalProps> = ({
                     <input
                       type="number"
                       value={customCT}
-                      onChange={(e) => setCustomCT(Math.max(10, parseFloat(e.target.value) || 10))}
+                      onChange={(e) => setCustomCT(e.target.value)}
+                      aria-label="Custom target cycle time (seconds)"
+                      min="0"
+                      step="any"
                       className="w-20 px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-xs font-mono text-white focus:border-cyan-400 focus:outline-none"
                     />
                     <span className="text-xs text-slate-400">s</span>
@@ -290,11 +285,14 @@ export const OptimizerModal: React.FC<OptimizerModalProps> = ({
           <button
             type="button"
             onClick={() => {
-              const name = `${algorithm.toUpperCase()} Balanced (${optimizedMetrics.actualWorkstationsCount} ST)`;
-              onSaveAsScenario(name, optimizationResult.stations, optimizationResult.tasks);
-              onClose();
+              if (!canApply) return;
+              const name = `${algorithm.toUpperCase()} Proposal (${optimizedMetrics.actualWorkstationsCount} ST)`;
+              const saved = onSaveAsScenario(name, optimizationResult.stations, optimizationResult.tasks);
+              setSubmissionFailed(saved === false);
+              if (saved !== false) onClose();
             }}
-            className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-lg border border-slate-700 transition-colors cursor-pointer"
+            disabled={!canApply}
+            className="disabled:opacity-40 disabled:cursor-not-allowed px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-lg border border-slate-700 transition-colors cursor-pointer"
           >
             Save as What-If Scenario
           </button>
@@ -310,17 +308,19 @@ export const OptimizerModal: React.FC<OptimizerModalProps> = ({
             <button
               type="button"
               onClick={() => {
-                onApplyOptimization(optimizationResult.stations, optimizationResult.tasks);
-                onClose();
+                if (!canApply) return;
+                const applied = onApplyOptimization(optimizationResult.stations, optimizationResult.tasks);
+                setSubmissionFailed(applied === false);
+                if (applied !== false) onClose();
               }}
-              className="px-5 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold rounded-lg shadow-sm transition-colors cursor-pointer flex items-center gap-1.5"
+              disabled={!canApply}
+              className="disabled:opacity-40 disabled:cursor-not-allowed px-5 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold rounded-lg shadow-sm transition-colors cursor-pointer flex items-center gap-1.5"
             >
               <CheckCircle2 className="w-4 h-4" />
               Apply Optimization to Line
             </button>
           </div>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 };

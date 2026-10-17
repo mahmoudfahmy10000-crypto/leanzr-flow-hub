@@ -114,3 +114,121 @@ test('calculateLineMetrics computes efficiency, bottleneck, and smoothness index
   // Takt is 120s, bottleneck is 100s <= 120s, no unassigned tasks
   assert.equal(metrics.taktAttainmentAchieved, true);
 });
+
+// Phase 1: golden engineering contracts independent of sample UI data.
+const oneHour = {...mockParams, demandUnitsPerPeriod:360, demandPeriodDays:1,
+  shiftsPerDay:1, hoursPerShift:1, plannedDowntimeMinutesPerShift:0, targetBufferPercent:0};
+const station = (id = 's1', operatorCount = 1): Workstation => ({id, code:id, name:id, operatorCount});
+const operation = (id: string, duration: number, assignedStationId: string | null = 's1', predecessors: string[] = [], category: Task['category'] = 'VA'): Task =>
+  ({id, code:id, name:id, duration, assignedStationId, predecessors, category, ergonomics:'low'});
+
+test('daily and period output have independent horizons while proportional demand preserves takt', () => {
+  const daily = calculateLineMetrics([station()], [operation('A',10)], oneHour);
+  const weekly = calculateLineMetrics([station()], [operation('A',10)], {...oneHour,demandPeriodDays:5,demandUnitsPerPeriod:1800});
+  assert.equal(weekly.availableTimeSecondsPerDay,3600);
+  assert.equal(weekly.availableTimeSecondsPerPeriod,18000);
+  assert.equal(weekly.dailyProductionCapacity,360);
+  assert.equal(weekly.periodProductionCapacity,1800);
+  assert.equal(weekly.taktTimeSeconds,daily.taktTimeSeconds);
+  assert.equal(weekly.assessment.status,'valid');
+});
+
+test('project work and VA ratio remain invariant when allocation changes', () => {
+  const tasks = [operation('A',10), operation('B',90,null,[],'NVA')];
+  const result = calculateLineMetrics([station()],tasks,oneHour);
+  assert.equal(result.totalWorkContentSeconds,100);
+  assert.equal(result.allocatedWorkContentSeconds,10);
+  assert.equal(result.vaRatioPercent,10);
+  assert.equal(result.allocatedVaRatioPercent,100);
+  assert.equal(result.theoreticalMinOperators,10);
+  assert.equal(result.assessment.status,'incomplete');
+  assert.equal(result.taktAttainmentAchieved,false);
+  const reassigned = calculateLineMetrics([station()],tasks.map(task=>({...task,assignedStationId:'s1'})),oneHour);
+  assert.equal(reassigned.totalWorkContentSeconds,100);
+  assert.equal(reassigned.vaRatioPercent,10);
+});
+
+test('backward precedence cannot attain takt even when every load fits', () => {
+  const metrics = calculateLineMetrics([station('s1'),station('s2')], [operation('A',5,'s2'),operation('B',5,'s1',['A'])], oneHour);
+  assert.equal(metrics.assessment.status,'infeasible');
+  assert.ok(metrics.assessment.reasons.some(reason=>reason.code==='PRECEDENCE_ORDER'));
+  assert.equal(metrics.taktAttainmentAchieved,false);
+});
+
+test('cycles, dangling references, and duplicated identities return invalid finite results', () => {
+  const candidates = [
+    [operation('A',5,'s1',['B']),operation('B',5,'s1',['A'])],
+    [operation('A',5,'s1',['MISSING'])],
+    [operation('A',5),operation('A',10)],
+  ];
+  for (const tasks of candidates) {
+    const result = calculateLineMetrics([station()],tasks,oneHour);
+    assert.equal(result.assessment.status,'invalid');
+    assert.equal(result.taktAttainmentAchieved,false);
+    assert.ok(result.assessment.reasons.length>0);
+    assert.ok(Object.values(result).filter(value=>typeof value==='number').every(Number.isFinite));
+    assert.ok(validatePrecedence(tasks,[station()]).length>0);
+  }
+});
+
+test('empty lines and missing assignment are incomplete with no success', () => {
+  for (const [stations,tasks] of [[[],[]],[[station()],[]],[[station()],[operation('A',5,null)]]] as [Workstation[],Task[]][]) {
+    const result = calculateLineMetrics(stations,tasks,oneHour);
+    assert.equal(result.assessment.status,'incomplete');
+    assert.equal(result.taktAttainmentAchieved,false);
+  }
+});
+
+test('adding operators never accelerates a fixed machine operation and marks unsupported', () => {
+  const params = {...oneHour,demandUnitsPerPeriod:60};
+  const single = calculateLineMetrics([station()], [operation('machine',100)],params);
+  const multi = calculateLineMetrics([station('s1',2)], [operation('machine',100)],params);
+  assert.equal(single.bottleneckCycleTime,100);
+  assert.equal(multi.bottleneckCycleTime,100);
+  assert.equal(multi.hourlyProductionCapacity,single.hourlyProductionCapacity);
+  assert.equal(multi.assessment.status,'unsupported');
+  assert.equal(multi.taktAttainmentAchieved,false);
+  assert.ok(multi.assessment.reasons.some(reason=>reason.code==='OVER_TAKT'));
+});
+
+test('over-takt and workplace-capacity violations have actionable infeasibility reasons', () => {
+  const result = calculateLineMetrics([{...station(),maxWorkplaceCapacity:0.5}], [operation('A',20)],oneHour);
+  // A malformed capacity is a runtime validation error, never a repaired input.
+  assert.equal(result.assessment.status,'invalid');
+  const over = calculateLineMetrics([station()], [operation('A',20)],oneHour);
+  assert.equal(over.assessment.status,'infeasible');
+  assert.equal(over.taktAttainmentAchieved,false);
+  assert.ok(over.assessment.reasons.some(reason=>reason.code==='OVER_TAKT'));
+});
+
+test('nonfinite inputs, invalid schedules, and derived overflow cannot produce success or Infinity', () => {
+  const cases: [Workstation[],Task[],OperatingParameters][] = [
+    [[station()],[operation('A',Infinity)],oneHour],
+    [[station()],[operation('A',10)],{...oneHour,hoursPerShift:NaN}],
+    [[station()],[operation('A',10)],{...oneHour,plannedDowntimeMinutesPerShift:60}],
+    [[station()],[operation('A',1e308),operation('B',1e308)],oneHour],
+    [[station()],[operation('A',1)],{...oneHour,demandPeriodDays:1e308}],
+    [[station()],[operation('A',1e300)],{...oneHour,demandUnitsPerPeriod:1e300}],
+  ];
+  for (const [stations,tasks,params] of cases) {
+    const result = calculateLineMetrics(stations,tasks,params);
+    assert.equal(result.assessment.status,'invalid');
+    assert.equal(result.taktAttainmentAchieved,false);
+    assert.ok(Object.values(result).filter(value=>typeof value==='number').every(Number.isFinite));
+  }
+});
+
+test('OEE remains informational and the nominal capacity assumption is explicit', () => {
+  const low = calculateLineMetrics([station()],[operation('A',10)],{...oneHour,oeeTargetPercent:50});
+  const high = calculateLineMetrics([station()],[operation('A',10)],{...oneHour,oeeTargetPercent:100});
+  assert.equal(low.taktTimeSeconds,high.taktTimeSeconds);
+  assert.equal(low.dailyProductionCapacity,high.dailyProductionCapacity);
+  assert.ok(low.assessment.assumptions.some(text=>text.includes('OEE target is informational')));
+  assert.ok(low.assessment.assumptions.some(text=>text.includes('not engineering approval')));
+});
+
+test('valid fractional durations and target buffer use the same unclamped contract', () => {
+  const result = calculateLineMetrics([station()],[operation('A',0.25)],{...oneHour,targetBufferPercent:60});
+  assert.equal(result.assessment.status,'valid');
+  assert.equal(result.targetCycleTimeSeconds,4);
+});

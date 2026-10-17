@@ -5,6 +5,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { Task, Workstation } from '../types/flowlab.ts';
+import { topologicalTaskOrder } from '../utils/project-validation.ts';
 import { GitCommit, ZoomIn, ZoomOut, RotateCcw, AlertTriangle } from 'lucide-react';
 
 interface PrecedenceGraphProps {
@@ -27,130 +28,68 @@ export const PrecedenceGraph: React.FC<PrecedenceGraphProps> = ({
     return map;
   }, [stations]);
 
-  // Compute Topological Levels for DAG layout
-  const { levels, positions, criticalPathTaskIds } = useMemo(() => {
-    const taskMap = new Map<string, Task>();
-    tasks.forEach((t) => taskMap.set(t.id, t));
+  // The shared validator guarantees an acyclic order before any layout/path work.
+  const { levels, positions, criticalPathTaskIds, graphIssues } = useMemo(() => {
+    const graph = topologicalTaskOrder(tasks);
+    const positions = new Map<string, { x: number; y: number }>();
+    const criticalPathTaskIds = new Set<string>();
+    if (graph.issues.length > 0) {
+      return { levels: [] as Task[][], positions, criticalPathTaskIds, graphIssues: graph.issues };
+    }
 
-    // Calculate level of each task (max level of predecessors + 1)
     const taskLevels = new Map<string, number>();
-
-    function getLevel(taskId: string, visited = new Set<string>()): number {
-      if (taskLevels.has(taskId)) return taskLevels.get(taskId)!;
-      if (visited.has(taskId)) return 0; // break cycle
-      visited.add(taskId);
-
-      const task = taskMap.get(taskId);
-      if (!task || task.predecessors.length === 0) {
-        taskLevels.set(taskId, 0);
-        return 0;
-      }
-
-      let maxPredLevel = 0;
-      for (const predId of task.predecessors) {
-        const lvl = getLevel(predId, new Set(visited));
-        if (lvl + 1 > maxPredLevel) {
-          maxPredLevel = lvl + 1;
-        }
-      }
-
-      taskLevels.set(taskId, maxPredLevel);
-      return maxPredLevel;
-    }
-
-    tasks.forEach((t) => getLevel(t.id));
-
-    // Group tasks by level
-    const maxLevel = Math.max(...Array.from(taskLevels.values()), 0);
-    const levelBuckets: Task[][] = Array.from({ length: maxLevel + 1 }, () => []);
-
-    tasks.forEach((t) => {
-      const lvl = taskLevels.get(t.id) || 0;
-      levelBuckets[lvl].push(t);
-    });
-
-    // Compute coordinate positions: X = level * 200 + 60, Y = vertical center spacing
-    const pos = new Map<string, { x: number; y: number }>();
-    const colWidth = 220;
-    const rowHeight = 90;
-
-    levelBuckets.forEach((bucket, lvl) => {
-      const startY = 80;
-      bucket.forEach((task, idx) => {
-        pos.set(task.id, {
-          x: lvl * colWidth + 80,
-          y: startY + idx * rowHeight,
-        });
-      });
-    });
-
-    // Find Critical Path (Longest path by duration from root to leaf)
     const earliestFinish = new Map<string, number>();
-
-    function getEarliestFinish(taskId: string): number {
-      if (earliestFinish.has(taskId)) return earliestFinish.get(taskId)!;
-      const task = taskMap.get(taskId);
-      if (!task) return 0;
-
-      let maxPredFinish = 0;
-      for (const predId of task.predecessors) {
-        const pf = getEarliestFinish(predId);
-        if (pf > maxPredFinish) maxPredFinish = pf;
-      }
-
-      const finish = maxPredFinish + task.duration;
-      earliestFinish.set(taskId, finish);
-      return finish;
-    }
-
-    tasks.forEach((t) => getEarliestFinish(t.id));
-
-    // Trace back critical path
-    let maxFinishTaskId: string | null = null;
-    let maxFinishTime = 0;
-
-    tasks.forEach((t) => {
-      const f = earliestFinish.get(t.id) || 0;
-      if (f > maxFinishTime) {
-        maxFinishTime = f;
-        maxFinishTaskId = t.id;
-      }
-    });
-
-    const criticalIds = new Set<string>();
-    let currentId: string | null = maxFinishTaskId;
-
-    while (currentId) {
-      criticalIds.add(currentId);
-      const currTask = taskMap.get(currentId);
-      if (!currTask || currTask.predecessors.length === 0) break;
-
-      let bestPredId: string | null = null;
-      let bestPredFinish = -1;
-
-      for (const predId of currTask.predecessors) {
-        const pf = earliestFinish.get(predId) || 0;
-        if (pf > bestPredFinish) {
-          bestPredFinish = pf;
-          bestPredId = predId;
+    const criticalPredecessor = new Map<string, string | null>();
+    let lastCriticalTask: string | null = null;
+    let maxFinish = 0;
+    for (const task of graph.order) {
+      let level = 0;
+      let precedingFinish = 0;
+      let precedingId: string | null = null;
+      for (const predecessorId of task.predecessors) {
+        level = Math.max(level, (taskLevels.get(predecessorId) ?? -1) + 1);
+        const finish = earliestFinish.get(predecessorId) ?? 0;
+        if (finish > precedingFinish) {
+          precedingFinish = finish;
+          precedingId = predecessorId;
         }
       }
-      currentId = bestPredId;
+      taskLevels.set(task.id, level);
+      const finish = precedingFinish + task.duration;
+      earliestFinish.set(task.id, finish);
+      criticalPredecessor.set(task.id, precedingId);
+      if (finish > maxFinish) {
+        maxFinish = finish;
+        lastCriticalTask = task.id;
+      }
     }
-
-    return {
-      levels: levelBuckets,
-      positions: pos,
-      criticalPathTaskIds: criticalIds,
-    };
+    const maxLevel = Array.from(taskLevels.values()).reduce((max, level) => Math.max(max, level), 0);
+    const levels: Task[][] = Array.from({ length: maxLevel + 1 }, () => []);
+    for (const task of graph.order) levels[taskLevels.get(task.id) ?? 0].push(task);
+    levels.forEach((bucket, level) => bucket.forEach((task, index) => {
+      positions.set(task.id, { x: level * 220 + 80, y: 80 + index * 90 });
+    }));
+    for (let id = lastCriticalTask; id !== null; id = criticalPredecessor.get(id) ?? null) {
+      criticalPathTaskIds.add(id);
+    }
+    return { levels, positions, criticalPathTaskIds, graphIssues: graph.issues };
   }, [tasks]);
 
   const svgWidth = Math.max(800, levels.length * 240 + 100);
-  const maxRows = Math.max(...levels.map((l) => l.length), 1);
+  const maxRows = levels.reduce((max, level) => Math.max(max, level.length), 1);
   const svgHeight = Math.max(480, maxRows * 100 + 120);
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 text-slate-100 flex flex-col shadow-sm">
+      {graphIssues.length > 0 && (
+        <div role="alert" className="mb-4 rounded-lg border border-rose-700 bg-rose-950/40 p-3 text-xs text-rose-200">
+          <div className="flex items-center gap-1.5 font-semibold"><AlertTriangle className="h-4 w-4" /> Invalid precedence graph</div>
+          <p className="mt-1">Correct these references or remove the cyclic dependency before using the network diagram.</p>
+          <ul className="mt-2 list-disc pl-4 space-y-1">
+            {graphIssues.map((issue, index) => <li key={`${issue.code}-${index}`}>{issue.message}</li>)}
+          </ul>
+        </div>
+      )}
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-4 mb-4 pb-4 border-b border-slate-800">
         <div>
@@ -159,7 +98,7 @@ export const PrecedenceGraph: React.FC<PrecedenceGraphProps> = ({
             Precedence Network Diagram (DAG) & Critical Path
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            Assembly sequence flow. Glowing amber nodes indicate the Critical Path determining theoretical minimum line time.
+            Assembly sequence flow. Amber shows the precedence-only longest path; this is a processing-latency lower bound, not the production interval.
           </p>
         </div>
 

@@ -46,7 +46,7 @@ export interface StationCalculation {
   station: Workstation;
   tasks: Task[];
   totalWorkContent: number; // sum of task times
-  stationCycleTime: number; // totalWorkContent / operatorCount
+  stationCycleTime: number; // Conservative sequential elapsed time; extra labor does not accelerate work
   vaTime: number;
   nvarTime: number;
   nvaTime: number;
@@ -57,14 +57,33 @@ export interface StationCalculation {
   utilizationPercent: number; // (stationCycleTime / taktTime) * 100
 }
 
+export type EngineeringStatus = 'valid' | 'invalid' | 'incomplete' | 'infeasible' | 'unsupported';
+
+export interface EngineeringReason {
+  code: string;
+  message: string;
+  status: Exclude<EngineeringStatus, 'valid'>;
+}
+
+export interface EngineeringAssessment {
+  status: EngineeringStatus;
+  reasons: EngineeringReason[];
+  assumptions: string[];
+}
+
 export interface LineCalculations {
+  assessment: EngineeringAssessment;
   availableTimeSecondsPerDay: number;
+  availableTimeSecondsPerPeriod: number;
   taktTimeSeconds: number;
   targetCycleTimeSeconds: number;
   totalWorkContentSeconds: number;
+  allocatedWorkContentSeconds: number;
+  allocatedVaRatioPercent: number;
   bottleneckStationId: string | null;
   bottleneckCycleTime: number;
-  theoreticalMinWorkstations: number;
+  theoreticalMinWorkstations: number; // Legacy alias of theoreticalMinOperators; not a physical station minimum
+  theoreticalMinOperators: number;
   actualWorkstationsCount: number;
   actualOperatorsCount: number;
   lineBalancingEfficiencyPercent: number; // Sum(t_i) / (N * Bottleneck) * 100
@@ -72,6 +91,7 @@ export interface LineCalculations {
   smoothnessIndex: number; // sqrt(Sum((maxCT - CT_i)^2))
   hourlyProductionCapacity: number; // 3600 / Bottleneck
   dailyProductionCapacity: number; // (AvailableTime / Bottleneck)
+  periodProductionCapacity: number;
   taktAttainmentAchieved: boolean; // Bottleneck <= TaktTime
   vaRatioPercent: number; // (Sum(VA) / Sum(Total)) * 100
   stationCalculations: StationCalculation[];
