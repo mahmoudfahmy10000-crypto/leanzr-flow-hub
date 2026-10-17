@@ -1,0 +1,6 @@
+{
+  "name": "LEANZR FlowLab - Lean Line Balancing Studio",
+  "description": "Professional industrial engineering studio for lean line balancing, takt time calculation, Yamazumi analysis, bottleneck identification, and deterministic line optimization.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
