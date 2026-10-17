@@ -2,16 +2,19 @@
  * LEANZR FlowLab - Operating Parameters & Takt Time Calculator Modal
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useId, useState } from 'react';
 import { OperatingParameters } from '../types/flowlab.ts';
 import { calculateAvailableTime, calculateTaktTime, calculateTargetCycleTime } from '../utils/engineering-math.ts';
-import { Clock, X, Check, Calculator } from 'lucide-react';
+import { Check, Calculator } from 'lucide-react';
+import { Modal } from './Modal.tsx';
+import { validateOperatingParameters } from '../utils/project-validation.ts';
 
 interface OperatingParamsModalProps {
   isOpen: boolean;
   onClose: () => void;
   params: OperatingParameters;
-  onSaveParams: (params: OperatingParameters) => void;
+  onSaveParams: (params: OperatingParameters) => boolean | void;
+  saveError?: string | null;
 }
 
 export const OperatingParamsModal: React.FC<OperatingParamsModalProps> = ({
@@ -19,56 +22,74 @@ export const OperatingParamsModal: React.FC<OperatingParamsModalProps> = ({
   onClose,
   params,
   onSaveParams,
+  saveError,
 }) => {
   const [formData, setFormData] = useState<OperatingParameters>({ ...params });
+  const [errors, setErrors] = useState<string[]>([]);
+  const [submissionFailed, setSubmissionFailed] = useState(false);
+  const fieldId = useId();
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setFormData({ ...params });
+    setErrors([]);
+    setSubmissionFailed(false);
+  }, [params, isOpen]);
 
   if (!isOpen) return null;
 
   // Live preview calculations
-  const availableTime = calculateAvailableTime(formData);
-  const taktTime = calculateTaktTime(formData);
-  const targetCT = calculateTargetCycleTime(formData, taktTime);
+  const draftIssues = validateOperatingParameters(formData);
+  const availableTime = draftIssues.length ? null : calculateAvailableTime(formData);
+  const taktTime = draftIssues.length ? null : calculateTaktTime(formData);
+  const targetCT = taktTime === null ? null : calculateTargetCycleTime(formData, taktTime);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSaveParams(formData);
+    setErrors([]);
+    setSubmissionFailed(false);
+    if (draftIssues.length) {
+      setErrors(draftIssues.map((issue) => issue.message));
+      return;
+    }
+    if (onSaveParams({ ...formData }) === false) {
+      setSubmissionFailed(true);
+      return;
+    }
     onClose();
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col">
-        {/* Header */}
-        <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
-          <div className="flex items-center gap-2">
-            <Clock className="w-4 h-4 text-cyan-400" />
-            <h3 className="text-sm font-semibold text-white">
-              Line Operating Parameters & Takt Time Settings
-            </h3>
-          </div>
-          <button
-            onClick={onClose}
-            className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
+    <Modal isOpen={isOpen} onClose={onClose} title="Line Operating Parameters & Takt Time Settings" className="max-w-lg">
         {/* Form Body */}
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+        <form onSubmit={handleSubmit} onChangeCapture={() => { setSubmissionFailed(false); setErrors([]); }} className="p-5 space-y-4 overflow-y-auto">
+          {submissionFailed && (
+            <div role="alert" className="rounded-lg border border-rose-700 bg-rose-950/50 p-3 text-xs text-rose-200">
+              <p className="font-semibold">Parameters were not saved.</p>
+              <p>{saveError || 'The active project is unchanged. Your draft remains here; correct the problem and try saving again.'}</p>
+            </div>
+          )}
+          {errors.length > 0 && (
+            <div role="alert" className="rounded-lg border border-rose-700 bg-rose-950/50 p-3 text-xs text-rose-200">
+              <p className="font-semibold">Parameters were not saved. Correct these issues:</p>
+              <ul className="mt-1 list-disc pl-4">{errors.map((message, index) => <li key={index}>{message}</li>)}</ul>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-medium text-slate-300 block mb-1">
+              <label htmlFor={`${fieldId}-demand`} className="text-xs font-medium text-slate-300 block mb-1">
                 Customer Demand (Units)
               </label>
               <input
+                id={`${fieldId}-demand`}
                 type="number"
-                min="1"
-                value={formData.demandUnitsPerPeriod}
+                min="0"
+                step="any"
+                value={Number.isNaN(formData.demandUnitsPerPeriod) ? '' : formData.demandUnitsPerPeriod}
                 onChange={(e) =>
                   setFormData({
                     ...formData,
-                    demandUnitsPerPeriod: Math.max(1, parseInt(e.target.value) || 1),
+                    demandUnitsPerPeriod: e.target.valueAsNumber,
                   })
                 }
                 required
@@ -77,17 +98,19 @@ export const OperatingParamsModal: React.FC<OperatingParamsModalProps> = ({
             </div>
 
             <div>
-              <label className="text-xs font-medium text-slate-300 block mb-1">
+              <label htmlFor={`${fieldId}-period`} className="text-xs font-medium text-slate-300 block mb-1">
                 Demand Period (Days)
               </label>
               <input
+                id={`${fieldId}-period`}
                 type="number"
-                min="1"
-                value={formData.demandPeriodDays}
+                min="0"
+                step="any"
+                value={Number.isNaN(formData.demandPeriodDays) ? '' : formData.demandPeriodDays}
                 onChange={(e) =>
                   setFormData({
                     ...formData,
-                    demandPeriodDays: Math.max(1, parseInt(e.target.value) || 1),
+                    demandPeriodDays: e.target.valueAsNumber,
                   })
                 }
                 required
@@ -98,15 +121,16 @@ export const OperatingParamsModal: React.FC<OperatingParamsModalProps> = ({
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-medium text-slate-300 block mb-1">
+              <label htmlFor={`${fieldId}-shifts`} className="text-xs font-medium text-slate-300 block mb-1">
                 Shifts per Day
               </label>
               <select
+                id={`${fieldId}-shifts`}
                 value={formData.shiftsPerDay}
                 onChange={(e) =>
                   setFormData({
                     ...formData,
-                    shiftsPerDay: parseInt(e.target.value) || 1,
+                    shiftsPerDay: Number(e.target.value),
                   })
                 }
                 className="w-full px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-400"
@@ -114,23 +138,25 @@ export const OperatingParamsModal: React.FC<OperatingParamsModalProps> = ({
                 <option value={1}>1 Shift (Single)</option>
                 <option value={2}>2 Shifts (Double)</option>
                 <option value={3}>3 Shifts (Continuous 24h)</option>
+                {![1, 2, 3].includes(formData.shiftsPerDay) && <option value={formData.shiftsPerDay}>{formData.shiftsPerDay} Shifts (Current schedule)</option>}
               </select>
             </div>
 
             <div>
-              <label className="text-xs font-medium text-slate-300 block mb-1">
+              <label htmlFor={`${fieldId}-hours`} className="text-xs font-medium text-slate-300 block mb-1">
                 Gross Hours per Shift
               </label>
               <input
+                id={`${fieldId}-hours`}
                 type="number"
-                step="0.5"
-                min="1"
-                max="12"
-                value={formData.hoursPerShift}
+                step="any"
+                min="0"
+                max="24"
+                value={Number.isNaN(formData.hoursPerShift) ? '' : formData.hoursPerShift}
                 onChange={(e) =>
                   setFormData({
                     ...formData,
-                    hoursPerShift: Math.max(1, parseFloat(e.target.value) || 8),
+                    hoursPerShift: e.target.valueAsNumber,
                   })
                 }
                 required
@@ -141,17 +167,19 @@ export const OperatingParamsModal: React.FC<OperatingParamsModalProps> = ({
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-medium text-slate-300 block mb-1">
+              <label htmlFor={`${fieldId}-downtime`} className="text-xs font-medium text-slate-300 block mb-1">
                 Planned Downtime / Shift (min)
               </label>
               <input
+                id={`${fieldId}-downtime`}
                 type="number"
                 min="0"
-                value={formData.plannedDowntimeMinutesPerShift}
+                step="any"
+                value={Number.isNaN(formData.plannedDowntimeMinutesPerShift) ? '' : formData.plannedDowntimeMinutesPerShift}
                 onChange={(e) =>
                   setFormData({
                     ...formData,
-                    plannedDowntimeMinutesPerShift: Math.max(0, parseInt(e.target.value) || 0),
+                    plannedDowntimeMinutesPerShift: e.target.valueAsNumber,
                   })
                 }
                 placeholder="Lunch, breaks, 5S"
@@ -163,18 +191,20 @@ export const OperatingParamsModal: React.FC<OperatingParamsModalProps> = ({
             </div>
 
             <div>
-              <label className="text-xs font-medium text-slate-300 block mb-1">
+              <label htmlFor={`${fieldId}-buffer`} className="text-xs font-medium text-slate-300 block mb-1">
                 Target Safety Buffer (%)
               </label>
               <input
+                id={`${fieldId}-buffer`}
                 type="number"
                 min="0"
-                max="40"
-                value={formData.targetBufferPercent}
+                max="100"
+                step="any"
+                value={Number.isNaN(formData.targetBufferPercent) ? '' : formData.targetBufferPercent}
                 onChange={(e) =>
                   setFormData({
                     ...formData,
-                    targetBufferPercent: Math.max(0, parseFloat(e.target.value) || 0),
+                    targetBufferPercent: e.target.valueAsNumber,
                   })
                 }
                 className="w-full px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-cyan-400"
@@ -193,22 +223,23 @@ export const OperatingParamsModal: React.FC<OperatingParamsModalProps> = ({
             </div>
             <div className="grid grid-cols-3 gap-2 text-xs font-mono">
               <div className="p-2 bg-slate-900 rounded border border-slate-800/80">
-                <span className="text-[10px] text-slate-400 block">Available Time</span>
-                <span className="text-white font-bold">{availableTime.toLocaleString()}s</span>
-                <span className="text-[10px] text-slate-500 block">{(availableTime / 3600).toFixed(1)} hrs</span>
+                <span className="text-[10px] text-slate-400 block">Available Time / Period</span>
+                <span className="text-white font-bold">{availableTime === null ? '—' : `${availableTime.toLocaleString()}s`}</span>
+                <span className="text-[10px] text-slate-500 block">{availableTime === null ? 'Enter valid parameters' : `${(availableTime / 3600).toFixed(1)} hrs`}</span>
               </div>
               <div className="p-2 bg-slate-900 rounded border border-slate-800/80">
                 <span className="text-[10px] text-cyan-400 block font-semibold">Customer Takt</span>
-                <span className="text-cyan-300 text-sm font-bold">{taktTime.toFixed(1)}s</span>
-                <span className="text-[10px] text-slate-500 block">{(taktTime / 60).toFixed(2)} min</span>
+                <span className="text-cyan-300 text-sm font-bold">{taktTime === null ? '—' : `${taktTime.toFixed(1)}s`}</span>
+                <span className="text-[10px] text-slate-500 block">{taktTime === null ? 'Enter valid parameters' : `${(taktTime / 60).toFixed(2)} min`}</span>
               </div>
               <div className="p-2 bg-slate-900 rounded border border-slate-800/80">
                 <span className="text-[10px] text-amber-400 block font-semibold">Target Cycle Time</span>
-                <span className="text-amber-300 text-sm font-bold">{targetCT.toFixed(1)}s</span>
+                <span className="text-amber-300 text-sm font-bold">{targetCT === null ? '—' : `${targetCT.toFixed(1)}s`}</span>
                 <span className="text-[10px] text-slate-500 block">-{formData.targetBufferPercent}% buffer</span>
               </div>
             </div>
           </div>
+          <p className="text-[10px] text-slate-400">Capacity uses net scheduled time before OEE losses. OEE is planning metadata; no good-output or resource-scheduling guarantee is implied.</p>
 
           {/* Actions */}
           <div className="pt-3 border-t border-slate-800 flex items-center justify-end gap-2">
@@ -228,7 +259,6 @@ export const OperatingParamsModal: React.FC<OperatingParamsModalProps> = ({
             </button>
           </div>
         </form>
-      </div>
-    </div>
+    </Modal>
   );
 };

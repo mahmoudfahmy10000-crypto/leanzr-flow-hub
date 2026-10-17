@@ -3,7 +3,8 @@
  */
 
 import React from 'react';
-import { X, BookOpen, Calculator, Layers, Zap, CheckCircle2 } from 'lucide-react';
+import { Calculator, Layers, Zap, CheckCircle2 } from 'lucide-react';
+import { Modal } from './Modal.tsx';
 
 interface KaizenPlaybookModalProps {
   isOpen: boolean;
@@ -17,33 +18,10 @@ export const KaizenPlaybookModal: React.FC<KaizenPlaybookModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-4xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
-        {/* Header */}
-        <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-cyan-950 border border-cyan-700/60 flex items-center justify-center text-cyan-400">
-              <BookOpen className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="text-base font-semibold text-white">
-                Industrial Engineering Formula Reference & Lean Kaizen Playbook
-              </h2>
-              <p className="text-xs text-slate-400">
-                Rigorous definitions, mathematical proofs, and lean manufacturing line balancing guidelines
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
+    <Modal isOpen={isOpen} onClose={onClose} title="Industrial Engineering Formula Reference & Lean Kaizen Playbook" className="max-w-4xl">
         {/* Content Body */}
         <div className="p-6 overflow-y-auto space-y-6 text-slate-300 text-xs leading-relaxed">
+          <p className="rounded-lg border border-cyan-900 bg-cyan-950/30 p-3 text-cyan-200">Current model: operations at each station execute sequentially at their recorded elapsed durations. Extra operators do not shorten machine or task durations. Multi-operator schedules, skills, equipment sharing, overlap, and OEE-adjusted good output require separate engineering validation.</p>
           {/* Section 1: Core Mathematical Formulas */}
           <div>
             <h3 className="text-sm font-bold text-white flex items-center gap-2 mb-3 pb-1 border-b border-slate-800">
@@ -69,10 +47,10 @@ export const KaizenPlaybookModal: React.FC<KaizenPlaybookModalProps> = ({
                   Line Balancing Efficiency (LE)
                 </div>
                 <div className="p-2 bg-slate-900 rounded font-mono text-slate-200 text-xs">
-                  LE = [ Σ(Task Times) / (N_operators × Max_Cycle_Time) ] × 100%
+                  LE = [ Σ(Allocated Task Times) / (N_stations × Max_Cycle_Time) ] × 100%
                 </div>
                 <p className="text-slate-400 text-[11px]">
-                  Measures total productive utilization. A line balancing efficiency of &gt;85% is considered world-class; below 70% indicates heavy operator idle time / starvation.
+                  Measures station-load balance under the sequential elapsed-time model. This is not operator utilization or evidence of feasible machine/resource scheduling. Unallocated tasks are excluded from this ratio and remain visible in total project work content.
                 </p>
               </div>
 
@@ -84,19 +62,19 @@ export const KaizenPlaybookModal: React.FC<KaizenPlaybookModalProps> = ({
                   SI = √ [ Σ (Max_Cycle_Time - Station_Cycle_Time_i)² ]
                 </div>
                 <p className="text-slate-400 text-[11px]">
-                  Quantifies the workload disparity between operators. An SI of 0 indicates a perfectly leveled line where every station has identical cycle time.
+                  Quantifies workload disparity between stations. An SI of 0 indicates identical station cycle times; it does not establish resource feasibility.
                 </p>
               </div>
 
               <div className="p-4 bg-slate-950/60 rounded-xl border border-slate-800 space-y-2">
                 <div className="font-semibold text-violet-300 font-mono text-sm">
-                  Theoretical Minimum Workstations (N_min)
+                  Work-content Lower Bound (N_min)
                 </div>
                 <div className="p-2 bg-slate-900 rounded font-mono text-slate-200 text-xs">
                   N_min = ⌈ Σ(Task Times) / Takt Time ⌉
                 </div>
                 <p className="text-slate-400 text-[11px]">
-                  The minimum physical stations required under ideal 100% efficiency. Any actual station count N &gt; N_min represents potential balancing opportunity.
+                  An ideal sequential work-content lower bound. Precedence, indivisible operations, skills, machine resources, and overlap can require more capacity. This is not a validated minimum physical station count.
                 </p>
               </div>
             </div>
@@ -169,7 +147,7 @@ export const KaizenPlaybookModal: React.FC<KaizenPlaybookModalProps> = ({
                   Dual-Operator Workcells
                 </div>
                 <p className="text-slate-400 text-[11px]">
-                  When a single machine or fixture has large work content (e.g. laser welding cell), add a 2nd operator to split manual setup from machine cycle time.
+                  Separate manual attendance, setup, and fixed machine time in a reviewed resource schedule before claiming a second operator increases output. The current conservative model preserves recorded elapsed durations when operator count changes.
                 </p>
               </div>
 
@@ -195,7 +173,6 @@ export const KaizenPlaybookModal: React.FC<KaizenPlaybookModalProps> = ({
             Close Guide
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 };

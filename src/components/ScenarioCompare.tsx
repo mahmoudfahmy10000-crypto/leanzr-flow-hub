@@ -10,12 +10,6 @@ import {
   GitCompare,
   Plus,
   Trash2,
-  Check,
-  TrendingUp,
-  Boxes,
-  Gauge,
-  Percent,
-  Clock,
   ArrowRight,
 } from 'lucide-react';
 
@@ -26,6 +20,22 @@ interface ScenarioCompareProps {
   onCreateScenario: (name: string, description: string) => void;
   onDeleteScenario: (scenarioId: string) => void;
 }
+
+const EngineeringStatus = ({ metrics }: { metrics: LineCalculations }) => (
+  <div className="font-sans text-xs">
+    <span className={`font-semibold capitalize ${metrics.assessment.status === 'valid' ? 'text-emerald-400' : 'text-amber-400'}`}>
+      {metrics.assessment.status === 'valid' && metrics.taktAttainmentAchieved ? 'Valid · Takt attained' : metrics.assessment.status}
+    </span>
+    {metrics.assessment.reasons.length > 0 && (
+      <details className="mt-1 min-w-[200px] text-slate-400">
+        <summary className="cursor-pointer">Reasons ({metrics.assessment.reasons.length})</summary>
+        <ul className="mt-1 list-disc pl-4 space-y-1">
+          {metrics.assessment.reasons.map((reason, index) => <li key={`${reason.code}-${index}`}>{reason.message}</li>)}
+        </ul>
+      </details>
+    )}
+  </div>
+);
 
 export const ScenarioCompare: React.FC<ScenarioCompareProps> = ({
   project,
@@ -72,7 +82,7 @@ export const ScenarioCompare: React.FC<ScenarioCompareProps> = ({
             What-If Scenario Comparison Matrix
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            Compare active baseline line balance against kaizen reductions, rebalances, and peak demand configurations.
+            Compare ideal sequential estimates; daily capacity deltas use a common one-day horizon. OEE is informational, not applied.
           </p>
         </div>
 
@@ -138,12 +148,12 @@ export const ScenarioCompare: React.FC<ScenarioCompareProps> = ({
             <tr className="border-b border-slate-800 text-slate-400 font-medium">
               <th className="py-3 px-4 min-w-[200px]">Configuration</th>
               <th className="py-3 px-4 min-w-[120px]">Workstations</th>
-              <th className="py-3 px-4 min-w-[120px]">Work Content</th>
+              <th className="py-3 px-4 min-w-[120px]">Project / Allocated Work</th>
               <th className="py-3 px-4 min-w-[130px]">Bottleneck CT</th>
               <th className="py-3 px-4 min-w-[120px]">Line Efficiency</th>
-              <th className="py-3 px-4 min-w-[130px]">Hourly Output</th>
+              <th className="py-3 px-4 min-w-[130px]">Ideal Capacity</th>
               <th className="py-3 px-4 min-w-[120px]">Smoothness Index</th>
-              <th className="py-3 px-4 min-w-[110px]">Takt Status</th>
+              <th className="py-3 px-4 min-w-[110px]">Engineering Status</th>
               <th className="py-3 px-4 text-right">Actions</th>
             </tr>
           </thead>
@@ -167,7 +177,7 @@ export const ScenarioCompare: React.FC<ScenarioCompareProps> = ({
               </td>
               <td className="py-3 px-4 text-slate-200">
                 <span className="font-bold">{currentMetrics.totalWorkContentSeconds.toFixed(1)}s</span>
-                <span className="text-emerald-400 block text-[10px]">({currentMetrics.vaRatioPercent.toFixed(0)}% VA)</span>
+                <span className="text-slate-400 block text-[10px]">({currentMetrics.vaRatioPercent.toFixed(0)}% VA); allocated {currentMetrics.allocatedWorkContentSeconds.toFixed(1)}s</span>
               </td>
               <td className="py-3 px-4">
                 <span className={`font-bold ${currentMetrics.bottleneckCycleTime > currentMetrics.taktTimeSeconds ? 'text-rose-400' : 'text-slate-200'}`}>
@@ -178,7 +188,7 @@ export const ScenarioCompare: React.FC<ScenarioCompareProps> = ({
                 </span>
               </td>
               <td className="py-3 px-4">
-                <span className={`font-bold ${currentMetrics.lineBalancingEfficiencyPercent >= 85 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                <span className={`font-bold ${currentMetrics.assessment.status === 'valid' && currentMetrics.lineBalancingEfficiencyPercent >= 85 ? 'text-emerald-400' : 'text-slate-200'}`}>
                   {currentMetrics.lineBalancingEfficiencyPercent.toFixed(1)}%
                 </span>
                 <span className="text-slate-400 block text-[10px]">Loss: {currentMetrics.balancingLossPercent.toFixed(1)}%</span>
@@ -186,20 +196,13 @@ export const ScenarioCompare: React.FC<ScenarioCompareProps> = ({
               <td className="py-3 px-4 text-slate-200">
                 <span className="font-bold text-white">{currentMetrics.hourlyProductionCapacity}</span> u/hr
                 <span className="text-slate-400 block text-[10px]">{currentMetrics.dailyProductionCapacity} u/day</span>
+                <span className="text-slate-400 block text-[10px]">{currentMetrics.periodProductionCapacity} u/{project.operatingParams.demandPeriodDays}d</span>
               </td>
               <td className="py-3 px-4 text-slate-300">
                 {currentMetrics.smoothnessIndex.toFixed(1)}s
               </td>
               <td className="py-3 px-4">
-                {currentMetrics.taktAttainmentAchieved ? (
-                  <span className="text-emerald-400 font-sans text-xs flex items-center gap-1 font-semibold">
-                    <Check className="w-3.5 h-3.5" /> Attained
-                  </span>
-                ) : (
-                  <span className="text-rose-400 font-sans text-xs font-semibold">
-                    Over-Takt
-                  </span>
-                )}
+                <EngineeringStatus metrics={currentMetrics} />
               </td>
               <td className="py-3 px-4 text-right font-sans text-slate-500 text-xs">
                 Active
@@ -210,6 +213,7 @@ export const ScenarioCompare: React.FC<ScenarioCompareProps> = ({
             {evaluatedScenarios.map(({ scenario, metrics }) => {
               const effDiff = metrics.lineBalancingEfficiencyPercent - currentMetrics.lineBalancingEfficiencyPercent;
               const capDiff = metrics.dailyProductionCapacity - currentMetrics.dailyProductionCapacity;
+              const comparable = metrics.assessment.status === 'valid' && currentMetrics.assessment.status === 'valid';
 
               return (
                 <tr key={scenario.id} className="hover:bg-slate-800/40 transition-colors">
@@ -229,7 +233,7 @@ export const ScenarioCompare: React.FC<ScenarioCompareProps> = ({
                   </td>
                   <td className="py-3 px-4 text-slate-200">
                     <span className="font-bold">{metrics.totalWorkContentSeconds.toFixed(1)}s</span>
-                    <span className="text-emerald-400 block text-[10px]">({metrics.vaRatioPercent.toFixed(0)}% VA)</span>
+                    <span className="text-slate-400 block text-[10px]">({metrics.vaRatioPercent.toFixed(0)}% VA); allocated {metrics.allocatedWorkContentSeconds.toFixed(1)}s</span>
                   </td>
                   <td className="py-3 px-4">
                     <span className={`font-bold ${metrics.bottleneckCycleTime > metrics.taktTimeSeconds ? 'text-rose-400' : 'text-slate-200'}`}>
@@ -240,29 +244,22 @@ export const ScenarioCompare: React.FC<ScenarioCompareProps> = ({
                     <span className="font-bold text-white">
                       {metrics.lineBalancingEfficiencyPercent.toFixed(1)}%
                     </span>
-                    <span className={`block text-[10px] ${effDiff >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {effDiff >= 0 ? `+${effDiff.toFixed(1)}%` : `${effDiff.toFixed(1)}%`}
+                    <span className={`block text-[10px] ${!comparable ? 'text-slate-400' : effDiff >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {effDiff >= 0 ? `+${effDiff.toFixed(1)}%` : `${effDiff.toFixed(1)}%`}{!comparable && ' (diagnostic)'}
                     </span>
                   </td>
                   <td className="py-3 px-4 text-slate-200">
                     <span className="font-bold">{metrics.hourlyProductionCapacity}</span> u/hr
-                    <span className={`block text-[10px] ${capDiff >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {capDiff >= 0 ? `+${capDiff} u/d` : `${capDiff} u/d`}
+                    <span className="text-slate-400 block text-[10px]">{metrics.dailyProductionCapacity} u/day; {metrics.periodProductionCapacity} u/{scenario.operatingParams.demandPeriodDays}d</span>
+                    <span className={`block text-[10px] ${!comparable ? 'text-slate-400' : capDiff >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {capDiff >= 0 ? `+${capDiff} u/d` : `${capDiff} u/d`}{!comparable && ' (diagnostic)'}
                     </span>
                   </td>
                   <td className="py-3 px-4 text-slate-300">
                     {metrics.smoothnessIndex.toFixed(1)}s
                   </td>
                   <td className="py-3 px-4">
-                    {metrics.taktAttainmentAchieved ? (
-                      <span className="text-emerald-400 font-sans text-xs flex items-center gap-1 font-semibold">
-                        <Check className="w-3.5 h-3.5" /> Attained
-                      </span>
-                    ) : (
-                      <span className="text-rose-400 font-sans text-xs font-semibold">
-                        Over-Takt
-                      </span>
-                    )}
+                    <EngineeringStatus metrics={metrics} />
                   </td>
                   <td className="py-3 px-4 text-right font-sans">
                     <div className="flex items-center justify-end gap-2">

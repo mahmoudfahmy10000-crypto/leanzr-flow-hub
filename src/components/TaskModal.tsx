@@ -2,9 +2,11 @@
  * LEANZR FlowLab - Task Editor & Creation Modal
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useId } from 'react';
 import { Task, Workstation, TaskCategory, ErgonomicRating } from '../types/flowlab.ts';
-import { X, CheckCircle, Trash2 } from 'lucide-react';
+import { CheckCircle, Trash2 } from 'lucide-react';
+import { Modal } from './Modal.tsx';
+import { validateLineModel } from '../utils/project-validation.ts';
 
 interface TaskModalProps {
   isOpen: boolean;
@@ -12,8 +14,23 @@ interface TaskModalProps {
   task: Task | null; // null if creating a new task
   stations: Workstation[];
   allTasks: Task[];
-  onSaveTask: (task: Task) => void;
+  onSaveTask: (task: Task) => boolean | void;
+  saveError?: string | null;
   onDeleteTask?: (taskId: string) => void;
+}
+
+export function nextOperationCode(tasks: Task[]): string {
+  const codes = new Set(tasks.map((task) => task.code.trim().toUpperCase()));
+  let number = 10;
+  while (codes.has(`OP-${String(number).padStart(3, '0')}`)) number += 10;
+  return `OP-${String(number).padStart(3, '0')}`;
+}
+
+/** Keep qualifications and extension metadata that this editor does not expose. */
+export function buildTaskCandidate(task: Task | null, fields: Omit<Task, 'id'>, allTasks: Task[]): Task {
+  let id = task?.id ?? `task-${crypto.randomUUID()}`;
+  while (!task && allTasks.some((existing) => existing.id === id)) id = `task-${crypto.randomUUID()}`;
+  return { ...task, ...fields, id };
 }
 
 export const TaskModal: React.FC<TaskModalProps> = ({
@@ -23,6 +40,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   stations,
   allTasks,
   onSaveTask,
+  saveError,
   onDeleteTask,
 }) => {
   const [code, setCode] = useState('');
@@ -34,8 +52,14 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   const [ergonomics, setErgonomics] = useState<ErgonomicRating>('low');
   const [predecessors, setPredecessors] = useState<string[]>([]);
   const [toolsString, setToolsString] = useState('');
+  const [errors, setErrors] = useState<string[]>([]);
+  const [submissionFailed, setSubmissionFailed] = useState(false);
+  const fieldId = useId();
 
   useEffect(() => {
+    if (!isOpen) return;
+    setErrors([]);
+    setSubmissionFailed(false);
     if (task) {
       setCode(task.code);
       setName(task.name);
@@ -48,7 +72,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       setToolsString((task.toolsAndFixtures || []).join(', '));
     } else {
       // New task defaults
-      setCode(`OP-${String(allTasks.length * 10 + 10).padStart(3, '0')}`);
+      setCode(nextOperationCode(allTasks));
       setName('');
       setDescription('');
       setDuration(30);
@@ -64,27 +88,41 @@ export const TaskModal: React.FC<TaskModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    setErrors([]);
+    setSubmissionFailed(false);
 
     const tools = toolsString
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
 
-    const updatedTask: Task = {
-      id: task ? task.id : `task-${Date.now()}`,
-      code: code.trim() || 'OP-000',
-      name: name.trim(),
-      description: description.trim() || undefined,
-      duration: Math.max(1, duration),
+    const updatedTask = buildTaskCandidate(task, {
+      code: task && code === task.code ? task.code : code.trim(),
+      name: task && name === task.name ? task.name : name.trim(),
+      description: task && description === (task.description || '') ? task.description : description.trim() || undefined,
+      duration,
       category,
       assignedStationId: assignedStationId || null,
       ergonomics,
       predecessors,
-      toolsAndFixtures: tools.length > 0 ? tools : undefined,
-    };
+      toolsAndFixtures: task && toolsString === (task.toolsAndFixtures || []).join(', ')
+        ? task.toolsAndFixtures
+        : tools.length > 0 ? tools : undefined,
+    }, allTasks);
 
-    onSaveTask(updatedTask);
+    const candidateTasks = task
+      ? allTasks.map((existing) => existing.id === task.id ? updatedTask : existing)
+      : [...allTasks, updatedTask];
+    const issues = validateLineModel(stations, candidateTasks);
+    if (issues.length) {
+      setErrors(issues.map((issue) => issue.message));
+      return;
+    }
+
+    if (onSaveTask(updatedTask) === false) {
+      setSubmissionFailed(true);
+      return;
+    }
     onClose();
   };
 
@@ -100,29 +138,28 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   const candidatePredecessors = allTasks.filter((t) => !task || t.id !== task.id);
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
-        {/* Header */}
-        <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
-          <h3 className="text-sm font-semibold text-white">
-            {task ? `Edit Task: ${task.code}` : 'Add New Task Element'}
-          </h3>
-          <button
-            onClick={onClose}
-            className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
+    <Modal isOpen={isOpen} onClose={onClose} title={task ? `Edit Task: ${task.code}` : 'Add New Task Element'}>
         {/* Form Body */}
-        <form onSubmit={handleSubmit} className="p-5 overflow-y-auto space-y-4">
+        <form onSubmit={handleSubmit} onChangeCapture={() => { setSubmissionFailed(false); setErrors([]); }} className="p-5 overflow-y-auto space-y-4">
+          {submissionFailed && (
+            <div role="alert" className="rounded-lg border border-rose-700 bg-rose-950/50 p-3 text-xs text-rose-200">
+              <p className="font-semibold">Task was not saved.</p>
+              <p>{saveError || 'The active project is unchanged. Your draft remains here; correct the problem and try saving again.'}</p>
+            </div>
+          )}
+          {errors.length > 0 && (
+            <div role="alert" className="rounded-lg border border-rose-700 bg-rose-950/50 p-3 text-xs text-rose-200">
+              <p className="font-semibold">Task was not saved. Correct these issues:</p>
+              <ul className="mt-1 list-disc pl-4">{errors.map((message, index) => <li key={index}>{message}</li>)}</ul>
+            </div>
+          )}
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="text-xs font-medium text-slate-300 block mb-1">
+              <label htmlFor={`${fieldId}-code`} className="text-xs font-medium text-slate-300 block mb-1">
                 Operation Code
               </label>
               <input
+                id={`${fieldId}-code`}
                 type="text"
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
@@ -132,10 +169,11 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             </div>
 
             <div className="col-span-2">
-              <label className="text-xs font-medium text-slate-300 block mb-1">
+              <label htmlFor={`${fieldId}-name`} className="text-xs font-medium text-slate-300 block mb-1">
                 Task Name / Operation
               </label>
               <input
+                id={`${fieldId}-name`}
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
@@ -148,25 +186,27 @@ export const TaskModal: React.FC<TaskModalProps> = ({
 
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="text-xs font-medium text-slate-300 block mb-1">
+              <label htmlFor={`${fieldId}-duration`} className="text-xs font-medium text-slate-300 block mb-1">
                 Duration (seconds)
               </label>
               <input
+                id={`${fieldId}-duration`}
                 type="number"
-                step="0.5"
-                min="0.5"
-                value={duration}
-                onChange={(e) => setDuration(parseFloat(e.target.value) || 1)}
+                step="any"
+                min="0"
+                value={Number.isNaN(duration) ? '' : duration}
+                onChange={(e) => setDuration(e.target.valueAsNumber)}
                 required
                 className="w-full px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-cyan-400"
               />
             </div>
 
             <div>
-              <label className="text-xs font-medium text-slate-300 block mb-1">
+              <label htmlFor={`${fieldId}-category`} className="text-xs font-medium text-slate-300 block mb-1">
                 Lean Category
               </label>
               <select
+                id={`${fieldId}-category`}
                 value={category}
                 onChange={(e) => setCategory(e.target.value as TaskCategory)}
                 className="w-full px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-400"
@@ -178,10 +218,11 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             </div>
 
             <div>
-              <label className="text-xs font-medium text-slate-300 block mb-1">
+              <label htmlFor={`${fieldId}-station`} className="text-xs font-medium text-slate-300 block mb-1">
                 Assigned Station
               </label>
               <select
+                id={`${fieldId}-station`}
                 value={assignedStationId || ''}
                 onChange={(e) => setAssignedStationId(e.target.value || null)}
                 className="w-full px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-400"
@@ -198,10 +239,11 @@ export const TaskModal: React.FC<TaskModalProps> = ({
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-medium text-slate-300 block mb-1">
+              <label htmlFor={`${fieldId}-ergonomics`} className="text-xs font-medium text-slate-300 block mb-1">
                 Ergonomics Load
               </label>
               <select
+                id={`${fieldId}-ergonomics`}
                 value={ergonomics}
                 onChange={(e) => setErgonomics(e.target.value as ErgonomicRating)}
                 className="w-full px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-400"
@@ -213,10 +255,11 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             </div>
 
             <div>
-              <label className="text-xs font-medium text-slate-300 block mb-1">
+              <label htmlFor={`${fieldId}-tools`} className="text-xs font-medium text-slate-300 block mb-1">
                 Tools & Fixtures
               </label>
               <input
+                id={`${fieldId}-tools`}
                 type="text"
                 value={toolsString}
                 onChange={(e) => setToolsString(e.target.value)}
@@ -227,10 +270,11 @@ export const TaskModal: React.FC<TaskModalProps> = ({
           </div>
 
           <div>
-            <label className="text-xs font-medium text-slate-300 block mb-1">
+            <label htmlFor={`${fieldId}-description`} className="text-xs font-medium text-slate-300 block mb-1">
               Operation Instructions / Standard Work (SOP)
             </label>
             <textarea
+              id={`${fieldId}-description`}
               rows={2}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
@@ -241,9 +285,9 @@ export const TaskModal: React.FC<TaskModalProps> = ({
 
           {/* Predecessor DAG dependencies */}
           <div>
-            <label className="text-xs font-medium text-slate-300 block mb-1.5">
+            <p className="text-xs font-medium text-slate-300 block mb-1.5">
               Sequence Predecessors ({predecessors.length} selected)
-            </label>
+            </p>
             <div className="border border-slate-800 rounded-lg bg-slate-950/60 p-2 max-h-36 overflow-y-auto space-y-1">
               {candidatePredecessors.length === 0 ? (
                 <span className="text-xs text-slate-500">No other tasks available</span>
@@ -307,7 +351,6 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             </div>
           </div>
         </form>
-      </div>
-    </div>
+    </Modal>
   );
 };

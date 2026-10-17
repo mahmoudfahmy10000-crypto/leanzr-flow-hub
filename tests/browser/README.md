@@ -1,0 +1,5 @@
+Run the Phase 1 browser regressions with `npm run test:browser` or `python3 tests/browser/phase1_regressions.py`. The environment must already provide Python's `playwright` package and Chromium (`chromium`, `chromium-browser`, the `CHROMIUM_EXECUTABLE` path, or Playwright's provisioned Chromium executable). The suite installs nothing and changes no npm dependencies.
+
+The suite starts an isolated Vite server on an available loopback port, uses a fresh browser context for every test, and closes only its own server and browser. It asserts real DOM behavior, serialized local project preservation, report status and assumptions, native dialog keyboard behavior, and measured chart pixel geometry. Uncaught page errors fail each test. Synthetic fixtures contain no credentials or production data.
+
+The numeric-range report case uses finite task durations whose sum exceeds JavaScript's finite calculation range. This distinguishes runtime engineering assessment from structural import validation. An invalid stored payload is exercised separately to verify explicit recovery retains the original bytes.

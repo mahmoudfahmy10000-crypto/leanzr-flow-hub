@@ -5,8 +5,8 @@
  */
 
 import React, { useState } from 'react';
-import { LineCalculations, Task, StationCalculation } from '../types/flowlab.ts';
-import { AlertCircle, HelpCircle, Layers, Maximize2 } from 'lucide-react';
+import { LineCalculations, Task } from '../types/flowlab.ts';
+import { HelpCircle, Layers } from 'lucide-react';
 
 interface YamazumiChartProps {
   metrics: LineCalculations;
@@ -29,12 +29,17 @@ export const YamazumiChart: React.FC<YamazumiChartProps> = ({
 
   // Compute chart height scale
   const maxTime = Math.max(
-    takt * 1.25,
-    metrics.bottleneckCycleTime * 1.15,
+    Math.min(Number.MAX_VALUE, takt * 1.25),
+    Math.min(Number.MAX_VALUE, metrics.bottleneckCycleTime * 1.15),
+    Math.min(Number.MAX_VALUE, targetCT * 1.15),
     100
   );
 
-  const chartHeightPx = 360; // main SVG bar plotting height
+  const chartHeightPx = 360;
+  const columnLayout = { gridTemplateColumns: `repeat(${Math.max(1, metrics.stationCalculations.length)}, minmax(80px, 1fr))` };
+  const displayValue = (seconds: number) => viewUnit === 'seconds'
+    ? `${seconds.toFixed(1)}s`
+    : takt > 0 ? `${((seconds / takt) * 100).toFixed(0)}%` : 'N/A';
 
   const getY = (val: number) => {
     if (maxTime <= 0) return chartHeightPx;
@@ -139,211 +144,99 @@ export const YamazumiChart: React.FC<YamazumiChartProps> = ({
         </div>
       </div>
 
-      {/* Main Chart Canvas */}
-      <div className="relative w-full overflow-x-auto pb-2">
-        <div className="min-w-[700px] flex">
-          {/* Y-Axis scale labels */}
-          <div className="w-16 h-[360px] relative border-r border-slate-800 shrink-0 text-[11px] text-slate-500 font-mono select-none">
-            {[1, 0.75, 0.5, 0.25, 0].map((step) => {
-              const val = maxTime * step;
-              const y = chartHeightPx - step * chartHeightPx;
-              return (
-                <div
-                  key={step}
-                  className="absolute right-2 -translate-y-1/2 flex items-center gap-1"
-                  style={{ top: `${y}px` }}
-                >
-                  <span>
-                    {viewUnit === 'seconds'
-                      ? `${val.toFixed(0)}s`
-                      : `${((val / takt) * 100).toFixed(0)}%`}
+      {/* Headers and labels are outside the fixed plot; every bar shares its zero baseline. */}
+      <div className="w-full overflow-x-auto pb-2">
+        <div className="flex" style={{ minWidth: `${Math.max(700, metrics.stationCalculations.length * 110 + 64)}px` }}>
+          <div className="w-16 shrink-0 pt-12">
+            <div className="relative border-r border-slate-800 text-[11px] text-slate-500 font-mono select-none" style={{ height: chartHeightPx }}>
+              {[1, 0.75, 0.5, 0.25, 0].map(step => (
+                <div key={step} className="absolute right-2 -translate-y-1/2" style={{ top: chartHeightPx * (1 - step) }}>
+                  {displayValue(maxTime * step)}
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="grid h-12 items-center gap-6 px-4 text-center text-xs font-mono" style={columnLayout}>
+              {metrics.stationCalculations.map(sc => (
+                <div key={sc.station.id}>
+                  <span className={`font-bold ${sc.isOverTakt ? 'text-rose-400' : sc.isBottleneck ? 'text-amber-400' : 'text-slate-200'}`}>
+                    {displayValue(sc.stationCycleTime)}
+                  </span>
+                  <span className="block text-[10px] text-slate-400">{sc.station.operatorCount} ops · sequential</span>
+                </div>
+              ))}
+            </div>
+            <div data-testid="yamazumi-plot" data-max-seconds={maxTime} className="relative" style={{ height: chartHeightPx }}>
+              <div className="absolute bottom-0 left-0 right-0 border-t border-slate-600 pointer-events-none" />
+              {[0.25, 0.5, 0.75, 1].map(step => (
+                <div key={step} className="absolute left-0 right-0 border-t border-slate-800/60 pointer-events-none" style={{ top: chartHeightPx * (1 - step) }} />
+              ))}
+              {targetCT > 0 && targetY >= 0 && (
+                <div data-testid="yamazumi-target-line" data-seconds={targetCT} className="absolute left-0 right-0 border-t border-dashed border-amber-500/80 pointer-events-none z-10" style={{ top: targetY }}>
+                  <span className="absolute right-32 bottom-0 px-1.5 py-0.5 bg-amber-950/90 border border-amber-600/60 text-amber-300 text-[10px] font-mono rounded-xs">
+                    Target: {targetCT.toFixed(1)}s
                   </span>
                 </div>
-              );
-            })}
-          </div>
-
-          {/* Chart Columns Area */}
-          <div className="relative flex-1 h-[360px] pl-4 pr-6">
-            {/* Horizontal Grid lines */}
-            {[0.25, 0.5, 0.75, 1].map((step) => {
-              const y = chartHeightPx - step * chartHeightPx;
-              return (
-                <div
-                  key={step}
-                  className="absolute left-0 right-0 border-b border-slate-800/60 pointer-events-none"
-                  style={{ top: `${y}px` }}
-                />
-              );
-            })}
-
-            {/* Target Cycle Time Line */}
-            {targetCT > 0 && targetY >= 0 && (
-              <div
-                className="absolute left-0 right-0 pointer-events-none z-10 flex items-center"
-                style={{ top: `${targetY}px` }}
-              >
-                <div className="w-full border-b border-dashed border-amber-500/80" />
-                <span className="shrink-0 ml-2 px-1.5 py-0.5 bg-amber-950/80 border border-amber-600/60 text-amber-300 text-[10px] font-mono font-medium rounded-xs">
-                  Target CT: {targetCT.toFixed(1)}s
-                </span>
-              </div>
-            )}
-
-            {/* Takt Time Line */}
-            {takt > 0 && taktY >= 0 && (
-              <div
-                className="absolute left-0 right-0 pointer-events-none z-10 flex items-center"
-                style={{ top: `${taktY}px` }}
-              >
-                <div className="w-full border-b-2 border-cyan-400" />
-                <span className="shrink-0 ml-2 px-2 py-0.5 bg-cyan-950 border border-cyan-400 text-cyan-200 text-xs font-mono font-bold rounded-xs shadow-xs">
-                  TAKT: {takt.toFixed(1)}s
-                </span>
-              </div>
-            )}
-
-            {/* Station Bars Container */}
-            <div className="w-full h-full flex items-end gap-6 justify-around pt-6">
-              {metrics.stationCalculations.map((sc, stIdx) => {
-                const isOver = sc.isOverTakt;
-                const isBottleneck = sc.isBottleneck;
-                const cycleTime = sc.stationCycleTime;
-                const barHeight = maxTime > 0 ? (cycleTime / maxTime) * chartHeightPx : 0;
-
-                return (
-                  <div
-                    key={sc.station.id}
-                    className="flex-1 max-w-[120px] flex flex-col items-center h-full justify-end group"
-                  >
-                    {/* Top Metric Header for Bar */}
-                    <div className="text-center mb-1 text-xs select-none">
-                      <span
-                        className={`font-mono font-bold tabular-nums text-xs ${
-                          isOver
-                            ? 'text-rose-400'
-                            : isBottleneck
-                            ? 'text-amber-400'
-                            : 'text-slate-200'
-                        }`}
+              )}
+              {takt > 0 && taktY >= 0 && (
+                <div data-testid="yamazumi-takt-line" data-seconds={takt} className="absolute left-0 right-0 border-t-2 border-cyan-400 pointer-events-none z-10" style={{ top: taktY }}>
+                  <span className="absolute right-0 bottom-0 px-2 py-0.5 bg-cyan-950 border border-cyan-400 text-cyan-200 text-[10px] font-mono font-bold rounded-xs">
+                    TAKT: {takt.toFixed(1)}s
+                  </span>
+                </div>
+              )}
+              <div className="absolute inset-0 grid gap-6 px-4" style={columnLayout}>
+                {metrics.stationCalculations.map(sc => {
+                  const cycleTime = sc.stationCycleTime;
+                  const barHeight = maxTime > 0 ? (cycleTime / maxTime) * chartHeightPx : 0;
+                  return (
+                    <div key={sc.station.id} className="relative flex items-end justify-center min-w-0">
+                      <div
+                        data-testid="yamazumi-bar"
+                        data-station-id={sc.station.id}
+                        data-seconds={cycleTime}
+                        className={`w-full max-w-[120px] shrink-0 rounded-t-md overflow-hidden flex flex-col-reverse ${sc.isBottleneck ? 'ring-2 ring-amber-400/60' : ''}`}
+                        style={{ height: barHeight }}
                       >
-                        {viewUnit === 'seconds'
-                          ? `${cycleTime.toFixed(1)}s`
-                          : `${((cycleTime / takt) * 100).toFixed(0)}%`}
-                      </span>
-                      {sc.station.operatorCount > 1 && (
-                        <span className="text-[10px] text-slate-400 block font-mono">
-                          {sc.station.operatorCount} ops
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Stacked Bar Body */}
-                    <div
-                      className={`w-full rounded-t-md overflow-hidden flex flex-col-reverse relative border transition-all ${
-                        isBottleneck
-                          ? 'border-amber-400 ring-2 ring-amber-400/30'
-                          : 'border-slate-700 hover:border-slate-500'
-                      }`}
-                      style={{ height: `${Math.max(barHeight, 4)}px` }}
-                    >
-                      {cycleTime === 0 ? (
-                        <div className="w-full h-full bg-slate-800 flex items-center justify-center text-[10px] text-slate-500">
-                          Empty
-                        </div>
-                      ) : stackMode === 'tasks' ? (
-                        // Individual Task Segments
-                        sc.tasks.map((task) => {
-                          const taskHeight = (task.duration / (cycleTime * sc.station.operatorCount)) * 100;
-                          const isHovered = hoveredTask?.id === task.id;
-
-                          return (
-                            <div
-                              key={task.id}
-                              onClick={() => {
-                                onSelectTask(task);
-                                onOpenTaskModal(task);
-                              }}
-                              onMouseEnter={(e) => {
-                                setHoveredTask(task);
-                                const rect = e.currentTarget.getBoundingClientRect();
-                                setHoverPosition({ x: rect.right + 10, y: rect.top });
-                              }}
-                              onMouseLeave={() => {
-                                setHoveredTask(null);
-                                setHoverPosition(null);
-                              }}
-                              className="w-full relative cursor-pointer border-t border-slate-900/40 transition-colors flex items-center justify-center px-1 overflow-hidden"
-                              style={{
-                                height: `${taskHeight}%`,
-                                backgroundColor: getCategoryColor(task.category, isHovered),
-                              }}
-                            >
-                              <span className="text-[10px] font-mono text-white/95 truncate font-medium drop-shadow-xs">
-                                {task.duration >= 18 ? task.code : ''}
-                              </span>
-                            </div>
-                          );
-                        })
-                      ) : (
-                        // Lean Category Aggregate Segments (VA, NVAR, NVA)
-                        <>
-                          {sc.vaTime > 0 && (
-                            <div
-                              className="w-full bg-emerald-600 flex items-center justify-center border-t border-slate-900/40 text-[10px] text-white font-mono"
-                              style={{ height: `${(sc.vaTime / sc.totalWorkContent) * 100}%` }}
-                            >
-                              {sc.vaTime >= 20 ? `${sc.vaTime}s VA` : ''}
-                            </div>
-                          )}
-                          {sc.nvarTime > 0 && (
-                            <div
-                              className="w-full bg-amber-600 flex items-center justify-center border-t border-slate-900/40 text-[10px] text-white font-mono"
-                              style={{ height: `${(sc.nvarTime / sc.totalWorkContent) * 100}%` }}
-                            >
-                              {sc.nvarTime >= 20 ? `${sc.nvarTime}s NVAR` : ''}
-                            </div>
-                          )}
-                          {sc.nvaTime > 0 && (
-                            <div
-                              className="w-full bg-rose-600 flex items-center justify-center border-t border-slate-900/40 text-[10px] text-white font-mono"
-                              style={{ height: `${(sc.nvaTime / sc.totalWorkContent) * 100}%` }}
-                            >
-                              {sc.nvaTime >= 15 ? `${sc.nvaTime}s NVA` : ''}
-                            </div>
-                          )}
-                        </>
-                      )}
-                    </div>
-
-                    {/* Bottom Station Label */}
-                    <div className="mt-3 text-center">
-                      <div className="font-semibold text-xs text-white tracking-tight flex items-center justify-center gap-1">
-                        <span>{sc.station.code}</span>
-                      </div>
-                      <span className="text-[11px] text-slate-400 block truncate max-w-[110px]" title={sc.station.name}>
-                        {sc.station.name}
-                      </span>
-                      {/* Status Badges */}
-                      <div className="mt-1">
-                        {isBottleneck ? (
-                          <span className="inline-block px-1.5 py-0.5 bg-amber-950/80 text-amber-300 border border-amber-600/60 rounded-xs text-[9px] font-mono uppercase tracking-wider font-semibold">
-                            Bottleneck
-                          </span>
-                        ) : isOver ? (
-                          <span className="inline-block px-1.5 py-0.5 bg-rose-950/80 text-rose-300 border border-rose-600/60 rounded-xs text-[9px] font-mono uppercase tracking-wider font-semibold">
-                            Over Takt
-                          </span>
-                        ) : sc.idleTimeSeconds > 0 ? (
-                          <span className="text-[10px] text-slate-500 font-mono">
-                            Idle: {sc.idleTimeSeconds.toFixed(0)}s
-                          </span>
-                        ) : null}
+                        {cycleTime > 0 && (stackMode === 'tasks' ? sc.tasks.map(task => (
+                          <button
+                            key={task.id}
+                            type="button"
+                            aria-label={`Edit ${task.code}: ${task.name}`}
+                            onClick={() => { onSelectTask(task); onOpenTaskModal(task); }}
+                            onMouseEnter={event => {
+                              setHoveredTask(task);
+                              const rect = event.currentTarget.getBoundingClientRect();
+                              setHoverPosition({ x: rect.right + 10, y: rect.top });
+                            }}
+                            onMouseLeave={() => { setHoveredTask(null); setHoverPosition(null); }}
+                            className="w-full min-h-0 shrink-0 relative cursor-pointer border-t border-slate-900/40 transition-colors flex items-center justify-center px-1 overflow-hidden focus-visible:outline-2 focus-visible:outline-white focus-visible:-outline-offset-2"
+                            style={{ flex: `0 0 ${(task.duration / cycleTime) * 100}%`, backgroundColor: getCategoryColor(task.category, hoveredTask?.id === task.id) }}
+                          >
+                            <span className="text-[10px] font-mono text-white/95 truncate font-medium drop-shadow-xs">{task.duration >= 18 ? task.code : ''}</span>
+                          </button>
+                        )) : ([['VA', sc.vaTime], ['NVAR', sc.nvarTime], ['NVA', sc.nvaTime]] as const).filter(([, duration]) => duration > 0).map(([category, duration]) => (
+                          <div key={category} className="w-full min-h-0 overflow-hidden shrink-0 border-t border-slate-900/40 flex items-center justify-center text-[10px] text-white font-mono" style={{ flex: `0 0 ${(duration / cycleTime) * 100}%`, backgroundColor: getCategoryColor(category) }}>
+                            {duration >= 20 ? `${duration}s ${category}` : ''}
+                          </div>
+                        )))}
                       </div>
                     </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="grid gap-6 px-4 pt-3 text-center" style={columnLayout}>
+              {metrics.stationCalculations.map(sc => (
+                <div key={sc.station.id} className="min-w-0">
+                  <div className="font-semibold text-xs text-white">{sc.station.code}</div>
+                  <div className="text-[11px] text-slate-400 truncate" title={sc.station.name}>{sc.station.name}</div>
+                  <div className="mt-1 text-[10px] font-mono">
+                    {sc.isOverTakt ? <span className="text-rose-300">Over Takt</span> : sc.isBottleneck ? <span className="text-amber-300">Bottleneck</span> : <span className="text-slate-500">{sc.stationCycleTime > 0 ? `Idle: ${sc.idleTimeSeconds.toFixed(0)}s` : 'Empty'}</span>}
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
           </div>
         </div>
@@ -403,7 +296,7 @@ export const YamazumiChart: React.FC<YamazumiChartProps> = ({
           </span>
         </span>
         <span className="font-mono text-slate-400">
-          Total Work Content: {metrics.totalWorkContentSeconds.toFixed(1)}s ({metrics.vaRatioPercent.toFixed(1)}% VA)
+          Project: {metrics.totalWorkContentSeconds.toFixed(1)}s ({metrics.vaRatioPercent.toFixed(1)}% VA) · Allocated: {metrics.allocatedWorkContentSeconds.toFixed(1)}s
         </span>
       </div>
     </div>
